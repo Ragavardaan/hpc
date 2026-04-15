@@ -1,0 +1,209 @@
+#include <omp.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <unistd.h>   // usleep
+
+#define QCAP 1024
+
+// ----- shared bounded circular queue (NO structs) -----
+static char *qbuf[QCAP];
+static int qhead = 0;
+static int qtail = 0;
+static int qcount = 0;
+
+static omp_lock_t qlock;
+static int producers_finished = 0;
+
+static void enqueue_line(char *owned_line)
+{
+    for (;;) {
+        omp_set_lock(&qlock);
+        if (qcount < QCAP) {
+            qbuf[qtail] = owned_line;
+            qtail = (qtail + 1) % QCAP;
+            qcount++;
+            omp_unset_lock(&qlock);
+            return;
+        }
+        omp_unset_lock(&qlock);
+        usleep(1000); // queue full: backoff
+    }
+}
+
+static char *dequeue_line(void)
+{
+    omp_set_lock(&qlock);
+    if (qcount == 0) {
+        omp_unset_lock(&qlock);
+        return NULL;
+    }
+
+    char *s = qbuf[qhead];
+    qhead = (qhead + 1) % QCAP;
+    qcount--;
+    omp_unset_lock(&qlock);
+    return s;
+}
+
+static void producer_read_file(const char *path, int producer_id)
+{
+    // Log: which file this producer will read
+    #pragma omp critical(log_print)
+    {
+        fprintf(stderr, "[Producer %d] Reading file: %s\n", producer_id, path);
+        fflush(stderr);
+    }
+
+    FILE *fp = fopen(path, "r");
+    if (!fp) {
+        #pragma omp critical(log_print)
+        {
+            fprintf(stderr, "[Producer %d] ERROR opening '%s': %s\n",
+                    producer_id, path, strerror(errno));
+            fflush(stderr);
+        }
+        return;
+    }
+
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t nread;
+    long lines = 0;
+
+    while ((nread = getline(&line, &cap, fp)) != -1) {
+        (void)nread;
+        char *copy = strdup(line);
+        if (!copy) { perror("strdup"); exit(1); }
+        enqueue_line(copy);
+        lines++;
+    }
+
+    free(line);
+    fclose(fp);
+
+    // Log: file finished
+    #pragma omp critical(log_print)
+    {
+        fprintf(stderr, "[Producer %d] Finished file: %s (lines=%ld)\n",
+                producer_id, path, lines);
+        fflush(stderr);
+    }
+}
+
+static void consumer_tokenize_and_print(int P)
+{
+    const char *delims = " \t\r\n\v\f";
+
+    for (;;) {
+        char *line = dequeue_line();
+        if (line) {
+            char *save = NULL;
+            for (char *tok = strtok_r(line, delims, &save);
+                 tok != NULL;
+                 tok = strtok_r(NULL, delims, &save)) {
+
+                // tokens to STDOUT
+                #pragma omp critical(stdout_print)
+                {
+                    fputs(tok, stdout);
+                    fputc('\n', stdout);
+                }
+            }
+            free(line);
+            continue;
+        }
+
+        int done;
+        #pragma omp atomic read
+        done = producers_finished;
+
+        if (done == P) break;
+
+        usleep(1000); // empty but producers still running
+    }
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 4) {
+        fprintf(stderr,
+                "Usage: %s <P> <C> <file1> ... <fileP>\n"
+                "Example: %s 2 3 a.txt b.txt\n",
+                argv[0], argv[0]);
+        return 2;
+    }
+
+    int P = atoi(argv[1]);
+    int C = atoi(argv[2]);
+
+    if (P <= 0 || C <= 0) {
+        fprintf(stderr, "P and C must be positive.\n");
+        return 2;
+    }
+    if (argc != (3 + P)) {
+        fprintf(stderr, "Error: expected exactly %d filenames (one per producer).\n", P);
+        return 2;
+    }
+
+    // Program title (print once)
+    fprintf(stderr, "=============================================\n");
+    fprintf(stderr, " Producer-Consumer Tokenizer (OpenMP, bounded)\n");
+    fprintf(stderr, " Queue capacity: %d lines\n", QCAP);
+    fprintf(stderr, " Producers: %d | Consumers: %d\n", P, C);
+    fprintf(stderr, "=============================================\n");
+    fflush(stderr);
+
+    omp_init_lock(&qlock);
+    omp_set_dynamic(0);
+
+    #pragma omp parallel num_threads(P + C)
+    {
+        int tid = omp_get_thread_num();
+
+        if (tid < P) {
+            producer_read_file(argv[3 + tid], tid);
+
+            #pragma omp atomic update
+            producers_finished++;
+        } else {
+            consumer_tokenize_and_print(P);
+        }
+    }
+
+    omp_destroy_lock(&qlock);
+    return 0;
+}
+
+[23bcs179@mepcolinux ex10]$./tokenize 2 2 b.txt p1.txt 
+=============================================
+ Producer-Consumer Tokenizer (OpenMP, bounded)
+ Queue capacity: 1024 lines
+ Producers: 2 | Consumers: 2
+=============================================
+[Producer 0] Reading file: b.txt
+[Producer 1] Reading file: p1.txt
+[Producer 0] Finished file: b.txt (lines=1)
+[Producer 1] Finished file: p1.txt (lines=1)
+when
+this
+hi
+welcome
+to
+hpc.
+you
+will
+be
+seeing
+this
+mesage
+message
+is
+displayed,
+the
+program
+is
+executing
+on
+live.
