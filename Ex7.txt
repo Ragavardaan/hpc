@@ -1,0 +1,121 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <unistd.h>
+
+int a, b;
+char op;
+sem_t sem_add, sem_sub, sem_mul, sem_div;
+int run = 1;
+
+void *addition(void *arg) {
+    while(run) {
+        sem_wait(&sem_add);
+        if(!run) break;
+        printf("Add: %d + %d = %d\n", a, b, a + b);
+    }
+    return NULL;
+}
+
+void *subtraction(void *arg) {
+    while(run) {
+        sem_wait(&sem_sub);
+        if(!run) break;
+        printf("Sub: %d - %d = %d\n", a, b, a - b);
+    }
+    return NULL;
+}
+
+void *multiplication(void *arg) {
+    while(run) {
+        sem_wait(&sem_mul);
+        if(!run) break;
+        printf("Mul: %d * %d = %d\n", a, b, a * b);
+    }
+    return NULL;
+}
+
+void *division(void *arg) {
+    while(run) {
+        sem_wait(&sem_div);
+        if(!run) break;
+        if (b != 0) printf("Div: %d / %d = %.2f\n", a, b, (float)a / b);
+        else printf("Error: Division by zero\n");
+    }
+    return NULL;
+}
+
+int main() {
+    pthread_t t1, t2, t3, t4;
+
+    sem_init(&sem_add, 0, 0);
+    sem_init(&sem_sub, 0, 0);
+    sem_init(&sem_mul, 0, 0);
+    sem_init(&sem_div, 0, 0);
+
+    pthread_create(&t1, NULL, addition, NULL);
+    pthread_create(&t2, NULL, subtraction, NULL);
+    pthread_create(&t3, NULL, multiplication, NULL);
+    pthread_create(&t4, NULL, division, NULL);
+
+    printf("============Welcome to pthread synchronization using semaphore===============\n");
+    while(1) {
+        printf("\nEnter operator (+, -, *, /) or ~ to exit: ");
+        scanf(" %c", &op);
+
+        if (op == '~') {
+            run = 0;
+            // Wake all threads so they can exit their loops
+            sem_post(&sem_add); sem_post(&sem_sub);
+            sem_post(&sem_mul); sem_post(&sem_div);
+            break;
+        }
+
+        printf("Enter two integers: ");
+        scanf("%d %d", &a, &b);
+
+        if (op == '+') sem_post(&sem_add);
+        else if (op == '-') sem_post(&sem_sub);
+        else if (op == '*') sem_post(&sem_mul);
+        else if (op == '/') sem_post(&sem_div);
+        else printf("Invalid operator\n");
+        
+        // Small delay to let the thread print before the next prompt
+        usleep(100000); 
+    }
+
+    pthread_join(t1, NULL); pthread_join(t2, NULL);
+    pthread_join(t3, NULL); pthread_join(t4, NULL);
+
+    sem_destroy(&sem_add); sem_destroy(&sem_sub);
+    sem_destroy(&sem_mul); sem_destroy(&sem_div);
+
+    printf("Exited.\n");
+    return 0;
+}
+[23bcs179@mepcolinux ex7]$./ops 
+============Welcome to pthread synchronization using semaphore===============
+
+Enter operator (+, -, *, /) or ~ to exit: +
+Enter two integers: 5 8
+Add: 5 + 8 = 13
+
+Enter operator (+, -, *, /) or ~ to exit: -
+Enter two integers: 6 9
+Sub: 6 - 9 = -3
+
+Enter operator (+, -, *, /) or ~ to exit: *
+Enter two integers: 8 8
+Mul: 8 * 8 = 64
+
+Enter operator (+, -, *, /) or ~ to exit: /
+Enter two integers: 6 0
+Error: Division by zero
+
+Enter operator (+, -, *, /) or ~ to exit: /
+Enter two integers: 8 2
+Div: 8 / 2 = 4.00
+
+Enter operator (+, -, *, /) or ~ to exit: ~
+Exited.
