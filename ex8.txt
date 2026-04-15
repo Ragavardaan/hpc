@@ -1,0 +1,49 @@
+#include <stdio.h>
+#include <omp.h>
+
+int main() {
+    const int H = 4, W = 6;
+    int img[H][W];
+    printf("----------------------- To enhance the quality of image pixels using parallel for----------------------------\n");
+
+    // fill sample values
+    for (int i = 0; i < H; i++)
+        for (int j = 0; j < W; j++)
+            img[i][j] = i * W + j;
+    
+    printf("Pixel values before Operation:\n");
+    for (int i = 0; i < H; i++) {
+        for (int j = 0; j < W; j++)
+            printf("%d ", img[i][j]);
+        printf("\n");
+    }
+    
+    #pragma omp parallel for
+    for (int i = 0; i < H; i++) {
+        for (int j = 0; j < W; j++) {
+            img[i][j] += 10;
+        }
+    }
+
+    printf("Pixel values after operation:\n");
+    for (int i = 0; i < H; i++) {
+        for (int j = 0; j < W; j++)
+            printf("%d ", img[i][j]);
+        printf("\n");
+    }
+
+    return 0;
+}
+
+[23bcs179@mepcolinux ex8]$./pixel 
+----------------------- To enhance the quality of image pixels using parallel for----------------------------
+Pixel values before Operation:
+0 1 2 3 4 5 
+6 7 8 9 10 11 
+12 13 14 15 16 17 
+18 19 20 21 22 23 
+Pixel values after operation:
+10 11 12 13 14 15 
+16 17 18 19 20 21 
+22 23 24 25 26 27 
+28 29 30 31 32 33 
